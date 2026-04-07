@@ -1,0 +1,10 @@
+{
+  "id": "boswell",
+  "name": "Boswell",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Research project management with paradata tracking. Kanban tasks, funding, experiments, daily log, and status reports — all stored as plain markdown in your vault.",
+  "author": "Boswell",
+  "authorUrl": "https://github.com/shawngraham/boswell",
+  "isDesktopOnly": false
+}
