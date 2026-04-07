@@ -1,5 +1,9 @@
 # obsidian-boswell
-a small plugin for project metadata tracking, project management
+a small plugin for project metadata tracking, project management. Based on [https://github.com/shawngraham/boswell](my Boswell webapp).
+
+This version is for use in vanilla Obsidian: no other plugins necessary for my purposes (otherwise, I get caught up in trying to find the One True and Perfect Configuration and Workflow). 
+
+Basic use: keep notes however you like. Use the Boswell Dashboard and associated views to keep track of where the money is at, who is doing what, and what is being done by whom. Also, a timeline view of the same, plus report generation.
 
 ## Installation
 
