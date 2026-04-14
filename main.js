@@ -505,6 +505,12 @@ var ConfirmModal = class extends import_obsidian6.Modal {
 };
 
 // src/views/KanbanView.ts
+var TASK_TO_EXP_STATUS = {
+  "todo": "planned",
+  "in-progress": "running",
+  "blocked": "running",
+  "done": "completed"
+};
 var VIEW_TYPE_KANBAN = "bsw-kanban";
 var COLUMNS = [
   { id: "todo", label: "To Do", dotCls: "bsw-dot-neutral" },
@@ -640,6 +646,9 @@ var KanbanView = class extends BaseView {
       if (!task || task.status === status) return;
       this.tasks = this.tasks.map((t) => t.id === taskId ? { ...t, status } : t);
       await this.plugin.dm.saveTasks(this.tasks);
+      if (task.parentType === "experiment" && task.parentId) {
+        await this.syncExperimentFromTaskStatus(task.parentId, status);
+      }
       await this.plugin.refreshViews();
     });
   }
@@ -657,6 +666,9 @@ var KanbanView = class extends BaseView {
             });
           }
           this.tasks = this.tasks.map((t) => t.id === updated.id ? updated : t);
+          if (task.status !== updated.status && updated.parentType === "experiment" && updated.parentId) {
+            await this.syncExperimentFromTaskStatus(updated.parentId, updated.status);
+          }
         } else {
           this.tasks = [...this.tasks, updated];
           if (updated.assigneeId) {
@@ -680,6 +692,14 @@ var KanbanView = class extends BaseView {
     await this.plugin.dm.saveTasks(this.tasks);
     await this.plugin.dm.saveResearchers(this.researchers);
     await this.plugin.refreshViews();
+  }
+  /** Update the parent experiment's status to match a changed task status. */
+  async syncExperimentFromTaskStatus(experimentId, taskStatus) {
+    const expStatus = TASK_TO_EXP_STATUS[taskStatus];
+    const experiments = await this.plugin.dm.loadExperiments();
+    const exp = experiments.find((e) => e.id === experimentId);
+    if (!exp || exp.status === expStatus) return;
+    await this.plugin.dm.saveExperimentMeta({ ...exp, status: expStatus });
   }
 };
 
@@ -1300,6 +1320,11 @@ var WritingView = class extends BaseView {
 
 // src/views/ExperimentsView.ts
 var import_obsidian14 = require("obsidian");
+var EXP_TO_TASK_STATUS = {
+  planned: "todo",
+  running: "in-progress",
+  completed: "done"
+};
 var VIEW_TYPE_EXPERIMENTS = "bsw-experiments";
 var STATUS_DOT = {
   planned: "bsw-dot-neutral",
@@ -1342,9 +1367,7 @@ var ExperimentsView = class extends BaseView {
     (0, import_obsidian14.setIcon)(addBtn, "plus");
     addBtn.createEl("span", { text: " New Experiment" });
     addBtn.addEventListener("click", async () => {
-      const exp = await this.plugin.dm.createExperiment();
-      const file = this.plugin.dm.getExperimentFile(exp.id);
-      if (file) await this.app.workspace.openLinkText(file.path, "", false);
+      await this.plugin.dm.createExperiment();
       await this.plugin.refreshViews();
     });
     const note = el.createDiv({ cls: "bsw-info-banner" });
@@ -1357,16 +1380,23 @@ var ExperimentsView = class extends BaseView {
       return;
     }
     experiments.forEach((exp) => {
-      var _a, _b;
+      var _a, _b, _c, _d;
       const card = el.createDiv({ cls: "bsw-card bsw-experiment-card" });
       const top = card.createDiv({ cls: "bsw-row-between bsw-align-start" });
       const left = top.createDiv({ cls: "bsw-experiment-left" });
       const titleRow = left.createDiv({ cls: "bsw-row-gap bsw-align-center" });
       titleRow.createDiv({ cls: `bsw-dot ${STATUS_DOT[exp.status]}` });
+      let aliasInput = null;
       const titleInput = titleRow.createEl("input", { cls: "bsw-inline-input bsw-experiment-title", type: "text" });
       titleInput.value = exp.title;
       titleInput.addEventListener("change", async () => {
-        const updated = { ...exp, title: titleInput.value };
+        var _a2;
+        const newTitle = titleInput.value;
+        const oldAlias = (_a2 = exp.aliases) == null ? void 0 : _a2[0];
+        const aliasIsTitle = !oldAlias || oldAlias === exp.title;
+        const newAliases = aliasIsTitle ? [newTitle] : exp.aliases;
+        if (aliasIsTitle && aliasInput) aliasInput.value = newTitle;
+        const updated = { ...exp, title: newTitle, aliases: newAliases };
         await this.plugin.dm.saveExperimentMeta(updated);
       });
       const dateInput = left.createEl("input", { cls: "bsw-inline-input bsw-mono bsw-small", type: "date" });
@@ -1390,6 +1420,13 @@ var ExperimentsView = class extends BaseView {
         });
         btn.addEventListener("click", async () => {
           await this.plugin.dm.saveExperimentMeta({ ...exp, status: s });
+          if (exp.taskId) {
+            const allTasks = await this.plugin.dm.loadTasks();
+            const synced = allTasks.map(
+              (t) => t.id === exp.taskId ? { ...t, status: EXP_TO_TASK_STATUS[s] } : t
+            );
+            await this.plugin.dm.saveTasks(synced);
+          }
           await this.plugin.refreshViews();
         });
       });
@@ -1416,15 +1453,23 @@ var ExperimentsView = class extends BaseView {
       folderInp.addEventListener("change", async () => {
         await this.plugin.dm.saveExperimentMeta({ ...exp, codeFolderPath: folderInp.value.trim() || void 0 });
       });
-      if (exp.aliases && exp.aliases.length > 0) {
-        const aliasRow = card.createDiv({ cls: "bsw-experiment-aliases" });
-        const aliasIc = aliasRow.createSpan();
-        (0, import_obsidian14.setIcon)(aliasIc, "link-2");
-        aliasRow.createEl("span", { cls: "bsw-small bsw-muted", text: `Wikilink: ` });
-        exp.aliases.forEach((a) => {
-          aliasRow.createEl("code", { cls: "bsw-alias-chip", text: `[[${a}]]` });
-        });
-      }
+      const aliasField = card.createDiv({ cls: "bsw-field bsw-experiment-code-field" });
+      aliasField.createEl("label", { cls: "bsw-field-label", text: "Wikilink Alias" });
+      const aliasRow = aliasField.createDiv({ cls: "bsw-row-gap bsw-align-center" });
+      const aliasIc = aliasRow.createSpan();
+      (0, import_obsidian14.setIcon)(aliasIc, "link-2");
+      aliasInput = aliasRow.createEl("input", {
+        cls: "bsw-input bsw-input-sm bsw-mono",
+        type: "text",
+        placeholder: exp.title
+      });
+      aliasInput.value = (_d = (_c = exp.aliases) == null ? void 0 : _c[0]) != null ? _d : exp.title;
+      aliasInput.addEventListener("change", async () => {
+        const newAlias = aliasInput.value.trim() || exp.title;
+        aliasInput.value = newAlias;
+        await this.plugin.dm.saveExperimentMeta({ ...exp, aliases: [newAlias] });
+      });
+      aliasRow.createEl("code", { cls: "bsw-alias-chip bsw-muted bsw-small", text: `[[\u2026]]` });
       const footer = card.createDiv({ cls: "bsw-card-footer" });
       const taskBtn = footer.createEl("button", {
         cls: `bsw-btn bsw-btn-xs${exp.taskId ? " bsw-btn-done" : ""}`,
