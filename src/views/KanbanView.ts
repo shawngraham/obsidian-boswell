@@ -1,9 +1,18 @@
 import { WorkspaceLeaf, setIcon } from "obsidian";
 import type BswPlugin from "../main";
 import type { Task, Researcher } from "../types";
+import type { Experiment } from "../types";
 import { BaseView } from "./BaseView";
 import { TaskModal } from "../modals/TaskModal";
 import { ConfirmModal } from "../modals/ConfirmModal";
+
+// "blocked" has no experiment equivalent — keep the experiment as "running"
+const TASK_TO_EXP_STATUS: Record<Task["status"], Experiment["status"]> = {
+  "todo":        "planned",
+  "in-progress": "running",
+  "blocked":     "running",
+  "done":        "completed",
+};
 
 export const VIEW_TYPE_KANBAN = "bsw-kanban";
 
@@ -158,6 +167,10 @@ export class KanbanView extends BaseView {
       if (!task || task.status === status) return;
       this.tasks = this.tasks.map((t) => (t.id === taskId ? { ...t, status } : t));
       await this.plugin.dm.saveTasks(this.tasks);
+      // Keep the linked experiment in sync
+      if (task.parentType === "experiment" && task.parentId) {
+        await this.syncExperimentFromTaskStatus(task.parentId, status);
+      }
       await this.plugin.refreshViews();
     });
   }
@@ -177,6 +190,10 @@ export class KanbanView extends BaseView {
             });
           }
           this.tasks = this.tasks.map((t) => (t.id === updated.id ? updated : t));
+          // Keep linked experiment in sync if status changed
+          if (task.status !== updated.status && updated.parentType === "experiment" && updated.parentId) {
+            await this.syncExperimentFromTaskStatus(updated.parentId, updated.status);
+          }
         } else {
           // Add
           this.tasks = [...this.tasks, updated];
@@ -200,5 +217,14 @@ export class KanbanView extends BaseView {
     await this.plugin.dm.saveTasks(this.tasks);
     await this.plugin.dm.saveResearchers(this.researchers);
     await this.plugin.refreshViews();
+  }
+
+  /** Update the parent experiment's status to match a changed task status. */
+  private async syncExperimentFromTaskStatus(experimentId: string, taskStatus: Task["status"]) {
+    const expStatus = TASK_TO_EXP_STATUS[taskStatus];
+    const experiments = await this.plugin.dm.loadExperiments();
+    const exp = experiments.find((e) => e.id === experimentId);
+    if (!exp || exp.status === expStatus) return;
+    await this.plugin.dm.saveExperimentMeta({ ...exp, status: expStatus });
   }
 }

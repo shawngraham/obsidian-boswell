@@ -4,6 +4,12 @@ import type { Experiment, Task } from "../types";
 import { BaseView } from "./BaseView";
 import { ConfirmModal } from "../modals/ConfirmModal";
 
+const EXP_TO_TASK_STATUS: Record<Experiment["status"], Task["status"]> = {
+  planned:   "todo",
+  running:   "in-progress",
+  completed: "done",
+};
+
 export const VIEW_TYPE_EXPERIMENTS = "bsw-experiments";
 
 const STATUS_DOT: Record<Experiment["status"], string> = {
@@ -104,6 +110,14 @@ export class ExperimentsView extends BaseView {
         });
         btn.addEventListener("click", async () => {
           await this.plugin.dm.saveExperimentMeta({ ...exp, status: s });
+          // Keep the linked task in sync
+          if (exp.taskId) {
+            const allTasks = await this.plugin.dm.loadTasks();
+            const synced = allTasks.map((t) =>
+              t.id === exp.taskId ? { ...t, status: EXP_TO_TASK_STATUS[s] } : t
+            );
+            await this.plugin.dm.saveTasks(synced);
+          }
           await this.plugin.refreshViews();
         });
       });
