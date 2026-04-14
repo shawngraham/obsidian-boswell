@@ -40,9 +40,7 @@ export class ExperimentsView extends BaseView {
     setIcon(addBtn, "plus");
     addBtn.createEl("span", { text: " New Experiment" });
     addBtn.addEventListener("click", async () => {
-      const exp = await this.plugin.dm.createExperiment();
-      const file = this.plugin.dm.getExperimentFile(exp.id);
-      if (file) await this.app.workspace.openLinkText(file.path, "", false);
+      await this.plugin.dm.createExperiment();
       await this.plugin.refreshViews();
     });
 
@@ -66,10 +64,18 @@ export class ExperimentsView extends BaseView {
 
       const titleRow = left.createDiv({ cls: "bsw-row-gap bsw-align-center" });
       titleRow.createDiv({ cls: `bsw-dot ${STATUS_DOT[exp.status]}` });
+      let aliasInput: HTMLInputElement | null = null;
       const titleInput = titleRow.createEl("input", { cls: "bsw-inline-input bsw-experiment-title", type: "text" }) as HTMLInputElement;
       titleInput.value = exp.title;
       titleInput.addEventListener("change", async () => {
-        const updated = { ...exp, title: titleInput.value };
+        const newTitle = titleInput.value;
+        // Auto-sync alias to title only if the alias still matches the old title
+        // (i.e. the user hasn't manually customised it)
+        const oldAlias = exp.aliases?.[0];
+        const aliasIsTitle = !oldAlias || oldAlias === exp.title;
+        const newAliases = aliasIsTitle ? [newTitle] : exp.aliases;
+        if (aliasIsTitle && aliasInput) aliasInput.value = newTitle;
+        const updated = { ...exp, title: newTitle, aliases: newAliases };
         await this.plugin.dm.saveExperimentMeta(updated);
       });
 
@@ -130,16 +136,24 @@ export class ExperimentsView extends BaseView {
         await this.plugin.dm.saveExperimentMeta({ ...exp, codeFolderPath: folderInp.value.trim() || undefined });
       });
 
-      // Aliases note
-      if (exp.aliases && exp.aliases.length > 0) {
-        const aliasRow = card.createDiv({ cls: "bsw-experiment-aliases" });
-        const aliasIc = aliasRow.createSpan();
-        setIcon(aliasIc, "link-2");
-        aliasRow.createEl("span", { cls: "bsw-small bsw-muted", text: `Wikilink: ` });
-        exp.aliases.forEach((a) => {
-          aliasRow.createEl("code", { cls: "bsw-alias-chip", text: `[[${a}]]` });
-        });
-      }
+      // Editable alias field — auto-populated from title, but user-overridable
+      const aliasField = card.createDiv({ cls: "bsw-field bsw-experiment-code-field" });
+      aliasField.createEl("label", { cls: "bsw-field-label", text: "Wikilink Alias" });
+      const aliasRow = aliasField.createDiv({ cls: "bsw-row-gap bsw-align-center" });
+      const aliasIc = aliasRow.createSpan();
+      setIcon(aliasIc, "link-2");
+      aliasInput = aliasRow.createEl("input", {
+        cls: "bsw-input bsw-input-sm bsw-mono",
+        type: "text",
+        placeholder: exp.title,
+      }) as HTMLInputElement;
+      aliasInput.value = exp.aliases?.[0] ?? exp.title;
+      aliasInput.addEventListener("change", async () => {
+        const newAlias = aliasInput!.value.trim() || exp.title;
+        aliasInput!.value = newAlias;
+        await this.plugin.dm.saveExperimentMeta({ ...exp, aliases: [newAlias] });
+      });
+      aliasRow.createEl("code", { cls: "bsw-alias-chip bsw-muted bsw-small", text: `[[…]]` });
 
       // Footer: generate task + delete
       const footer = card.createDiv({ cls: "bsw-card-footer" });
